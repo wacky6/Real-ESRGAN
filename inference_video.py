@@ -114,6 +114,8 @@ def main():
     frame_byte_size = width * height * n_channels
     frame_pix_fmt = 'bgr24'  # OpenCV uses BGR ordering
 
+    ### TODO: Add SIGINT / SIGTERM handler to kill input/output proc
+
     input_proc = subprocess.Popen([
             'ffmpeg', '-hide_banner',
             '-i', args.input, '-map', '0:v:0',
@@ -131,12 +133,15 @@ def main():
     # Spawn a background ffmpeg to encode output image to output video.
     out_width, out_height = int(args.outscale * width), int(args.outscale * height)
     out_frame_byte_size = out_width * out_height * n_channels
+    # TODO: make padding intelligent based on common video dimensions?
+    need_padding = out_width % 2 != 0 or out_height % 2 != 0
     output_proc = subprocess.Popen([
             'ffmpeg', '-hide_banner', '-nostats',
             '-pix_fmt', 'bgr24', '-f', 'rawvideo', '-r', fps, '-video_size', f'{out_width}x{out_height}',
             '-i', '-',
         ]
         + ([] if not has_audio_stream else ['-i', args.input, '-map', '0:v', '-map', '1:a', '-c:a', 'copy'])
+        + ([] if not need_padding else ['-vf', f'pad=ceil(iw/2)*2:ceil(ih/2)*2'])
         + [
             '-c:v', args.vcodec, '-crf', args.vcrf, '-preset', args.vpreset, '-pix_fmt', args.vpix_fmt,
             '-y', args.output
