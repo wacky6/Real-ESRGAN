@@ -91,6 +91,7 @@ def main():
     video_stream = video_streams['streams'][0]
 
     width, height = video_stream['width'], video_stream['height'],
+    # TODO: add a fallback handler for crappy .flv container. Need to estinate from average fps?
     frames = int(video_stream['nb_frames'])
     fps = video_stream['r_frame_rate']
     n_channels = 3  # RGB channels
