@@ -91,12 +91,12 @@ def main():
     video_stream = video_streams['streams'][0]
 
     width, height = video_stream['width'], video_stream['height'],
-    # TODO: add a fallback handler for crappy .flv container. Need to estinate from average fps?
-    frames = int(video_stream['nb_frames'])
+    frames = int(video_stream['nb_frames']) if 'nb_frames' in video_stream else None
     fps = video_stream['r_frame_rate']
     n_channels = 3  # RGB channels
 
-    print(f"Found video stream: {width}x{height} size, {frames} frames @ {fps} fps")
+
+    print(f'Found video stream: {width}x{height} size, {frames if frames else "<unknown>"} frames @ {fps} fps')
 
     # Probe audio stream. If valid, automatically add audio to output.
     probe_audio_proc = subprocess.run([
@@ -157,7 +157,7 @@ def main():
     print(f'Streamers started, input pid: {input_proc.pid}, output pid: {output_proc.pid}')
 
     # Include a GPU saturation measurement in stat.
-    pbar = tqdm(total=frames)
+    pbar = tqdm(total=frames, ascii=True)
 
     # Performance metrics to evaluate GPU saturation.
     perf_read_start = time.time()
@@ -202,7 +202,6 @@ def main():
         perf_write_time = time.time() - perf_write_start
         pbar.set_postfix({
             'p_util': f'{perf_proc_time / (perf_read_time + perf_write_time + perf_proc_time) * 100:.1f}%',
-            'p_time': f'{int(perf_proc_time * 1000)}ms'
         })
         pbar.update()
 
