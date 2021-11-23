@@ -7,6 +7,8 @@ import json
 import numpy as np
 from tqdm import tqdm
 import time
+import torch
+import contextlib
 
 from basicsr.archs.rrdbnet_arch import RRDBNet
 from realesrgan import RealESRGANer
@@ -38,6 +40,7 @@ def main():
         type=str,
         default='realesrgan',
         help='The upsampler for the alpha channels. Options: realesrgan | bicubic')
+    parser.add_argument('--amp', dest='amp', help='Enable automatic mixed precision inferencing', action='store_true')
     args = parser.parse_args()
 
     if 'RealESRGAN_x4plus_anime_6B.pth' in args.model_path:
@@ -46,6 +49,11 @@ def main():
         args.netscale = 2
 
     model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=args.block, num_grow_ch=32, scale=args.netscale)
+
+    if args.amp:
+        autocast = torch.cuda.amp.autocast()
+    else:
+        autocast = contextlib.nullcontext()
 
     upsampler = RealESRGANer(
         scale=args.netscale,
@@ -91,6 +99,7 @@ def main():
     video_stream = video_streams['streams'][0]
 
     width, height = video_stream['width'], video_stream['height'],
+    # TODO: nb_frames is known to be inaccurate, perhaps also probe based on frame_rate * duration
     frames = int(video_stream['nb_frames']) if 'nb_frames' in video_stream else None
     fps = video_stream['r_frame_rate']
     n_channels = 3  # RGB channels
@@ -173,13 +182,14 @@ def main():
 
         # Upscale.
         try:
-            if args.face_enhance:
-                _, _, output = face_enhancer.enhance(
-                    raw_frame,
-                    has_aligned=False, only_center_face=False, paste_back=True
-                )
-            else:
-                output, _ = upsampler.enhance(raw_frame, outscale=args.outscale)
+            with autocast as autocast_:
+                if args.face_enhance:
+                    _, _, output = face_enhancer.enhance(
+                        raw_frame,
+                        has_aligned=False, only_center_face=False, paste_back=True
+                    )
+                else:
+                    output, _ = upsampler.enhance(raw_frame, outscale=args.outscale)
         except Exception as error:
             print('Error', error)
             print('If you encounter CUDA out of memory, try to set --tile with a smaller number.')
