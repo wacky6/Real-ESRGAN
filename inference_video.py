@@ -55,6 +55,11 @@ def main():
     else:
         autocast = contextlib.nullcontext()
 
+    # Turn on cuDNN benchmark and optimization.
+    # ESRGAN input size is fixed, so cuDNN benefits subsequent executions.
+    torch.backends.cudnn.enabled = True
+    torch.backends.cudnn.benchmark = True
+
     upsampler = RealESRGANer(
         scale=args.netscale,
         model_path=args.model_path,
