@@ -1,5 +1,4 @@
 import argparse
-import cv2
 import os
 import subprocess
 import sys
@@ -11,8 +10,8 @@ import torch
 import contextlib
 
 from basicsr.archs.rrdbnet_arch import RRDBNet
+from realesrgan.archs.srvgg_arch import SRVGGNetCompact
 from realesrgan import RealESRGANer
-
 
 def main():
     parser = argparse.ArgumentParser()
@@ -23,37 +22,48 @@ def main():
         default='experiments/pretrained_models/RealESRGAN_x4plus.pth',
         help='Path to the pre-trained model')
     parser.add_argument('--output', type=str, default='output.mp4', help='Output video file')
-    parser.add_argument('--netscale', type=int, default=4, help='Upsample scale factor of the network')
-    parser.add_argument('--outscale', type=float, default=4, help='The final upsampling scale of the image')
+    parser.add_argument('--outscale', type=float, help='The final upsampling scale of the image')
     parser.add_argument('--tile', type=int, default=0, help='Tile size, 0 for no tile during testing')
     parser.add_argument('--tile_pad', type=int, default=10, help='Tile padding')
-    parser.add_argument('--pre_pad', type=int, default=0, help='Pre padding size at each border')
     parser.add_argument('--face_enhance', action='store_true', help='Use GFPGAN to enhance face')
-    parser.add_argument('--half', action='store_true', help='Use half precision during inference')
-    parser.add_argument('--block', type=int, default=23, help='num_block in RRDB')
-    parser.add_argument('--vcodec', default='libx264', help='Output video codec')
-    parser.add_argument('--vpreset', default='veryslow', help='Output video preset')
-    parser.add_argument('--vcrf', default='19', help='Output video CRF')
-    parser.add_argument('--vpix_fmt', default='yuv420p', help='Output video chroma subsampling')
-    parser.add_argument(
-        '--alpha_upsampler',
-        type=str,
-        default='realesrgan',
-        help='The upsampler for the alpha channels. Options: realesrgan | bicubic')
+    parser.add_argument('--vcodec', default='hevc_nvenc', help='Output video codec')
+    parser.add_argument('--pix_fmt', default='yuv420p', help='Output video chroma subsampling')
     parser.add_argument('--amp', dest='amp', help='Enable automatic mixed precision inferencing', action='store_true')
     args = parser.parse_args()
 
-    if 'RealESRGAN_x4plus_anime_6B.pth' in args.model_path:
-        args.block = 6
-    elif 'RealESRGAN_x2plus.pth' in args.model_path:
-        args.netscale = 2
-
-    model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=args.block, num_grow_ch=32, scale=args.netscale)
+    # model params
+    netscale = None
+    if 'RealESRGAN_x4plus' in args.model_path:
+        netscale = 4
+        model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32, scale=netscale)
+    elif 'RealESRNet_x4plus' in args.model_path:
+        netscale = 4
+        model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32, scale=netscale)
+    elif 'RealESRGAN_x4plus_anime_6B' in args.model_path:
+        netscale = 4
+        model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=6, num_grow_ch=32, scale=netscale)
+    elif 'RealESRGAN_x2plus' in args.model_path:
+        netscale = 2
+        model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32, scale=netscale)
+    elif 'realesr-animevideov3' in args.model_path:
+        netscale = 4
+        model = SRVGGNetCompact(num_in_ch=3, num_out_ch=3, num_feat=64, num_conv=16, upscale=4, act_type='prelu')
+    elif 'realesr-general-x4v3' in args.model_path:
+        netscale = 4
+        model = SRVGGNetCompact(num_in_ch=3, num_out_ch=3, num_feat=64, num_conv=32, upscale=4, act_type='prelu')
+    elif 'realesr-general-wdn-x4v3' in args.model_path:
+        netscale = 4
+        model = SRVGGNetCompact(num_in_ch=3, num_out_ch=3, num_feat=64, num_conv=32, upscale=4, act_type='prelu')
+    else:
+        print(f"Unknown model: {args.model_path}")
+        sys.exit(2)
 
     if args.amp:
         autocast = torch.cuda.amp.autocast()
     else:
         autocast = contextlib.nullcontext()
+
+    outscale = outscale if args.outscale else netscale
 
     # Turn on cuDNN benchmark and optimization.
     # ESRGAN input size is fixed, so cuDNN benefits subsequent executions.
@@ -61,19 +71,20 @@ def main():
     torch.backends.cudnn.benchmark = True
 
     upsampler = RealESRGANer(
-        scale=args.netscale,
+        scale=netscale,
         model_path=args.model_path,
+        dni_weight=None,
         model=model,
         tile=args.tile,
         tile_pad=args.tile_pad,
-        pre_pad=args.pre_pad,
-        half=args.half)
+        pre_pad=0,
+        half=args.amp)
 
     if args.face_enhance:
         from gfpgan import GFPGANer
         face_enhancer = GFPGANer(
-            model_path='https://github.com/TencentARC/GFPGAN/releases/download/v0.2.0/GFPGANCleanv1-NoCE-C2.pth',
-            upscale=args.outscale,
+            model_path='https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.3.pth',
+            upscale=netscale,
             arch='clean',
             channel_multiplier=2,
             bg_upsampler=upsampler)
@@ -109,7 +120,6 @@ def main():
     fps = video_stream['r_frame_rate']
     n_channels = 3  # RGB channels
 
-
     print(f'Found video stream: {width}x{height} size, {frames if frames else "<unknown>"} frames @ {fps} fps')
 
     # Probe audio stream. If valid, automatically add audio to output.
@@ -127,7 +137,7 @@ def main():
 
     # Spawn a background ffmpeg to read video stream to rawvideo frames.
     frame_byte_size = width * height * n_channels
-    frame_pix_fmt = 'bgr24'  # OpenCV uses BGR ordering
+    frame_pix_fmt = 'bgr24'  # Real-ESRGAN uses bgr24 input/output
 
     ### TODO: Add SIGINT / SIGTERM handler to kill input/output proc
 
@@ -145,27 +155,46 @@ def main():
         bufsize = 4 * frame_byte_size,
     )
 
+    # Calculate ffmpeg video filter (e.g. resize, padding, etc.)
+    out_filter_chain=[]
+    out_width, out_height = int(outscale * width), int(outscale  * height)
+    if netscale != outscale:
+        # outscale is different from netscale
+        print(f"FYI: outscale={outscale} doesn't match netscale={netscale}, ffmpeg will scale the output.")
+        out_filter_chain.append(f'scale={out_width}x{out_height}:flags=lanczos')
+    if out_width % 2 != 0 or out_height % 2 != 0:
+        # output needs padding to fit meet encoder's expectation
+        out_filter_chain.append(f'pad=ceil(iw/2)*2:ceil(ih/2)*2')
+
+    # Pick codec params
+    codec_args = []
+    if args.vcodec == 'hevc_nvenc':
+        codec_args = ['-c:v', args.vcodec, '-preset', 'p7', '-cq', '18']
+    elif args.vcodec == 'libx265':
+        codec_args = ['-c:v', args.vcodec, '-crf', '18']
+    else:
+        print("FYI: unknown vcodec={vcodec}, default ffmpeg codec params will be used")
+        codec_args = ['-c:v', args.vcodec]
+
     # Spawn a background ffmpeg to encode output image to output video.
-    out_width, out_height = int(args.outscale * width), int(args.outscale * height)
-    out_frame_byte_size = out_width * out_height * n_channels
-    # TODO: make padding intelligent based on common video dimensions?
-    need_padding = out_width % 2 != 0 or out_height % 2 != 0
+    net_width, net_height = int(netscale * width), int(netscale * height)
+    net_frame_byte_size = net_width * net_height * n_channels
     output_proc = subprocess.Popen([
             'ffmpeg', '-hide_banner', '-nostats',
-            '-pix_fmt', 'bgr24', '-f', 'rawvideo', '-r', fps, '-video_size', f'{out_width}x{out_height}',
+            '-pix_fmt', 'bgr24', '-f', 'rawvideo', '-r', fps, '-video_size', f'{net_width}x{net_height}',
             '-i', '-',
         ]
         + ([] if not has_audio_stream else ['-i', args.input, '-map', '0:v', '-map', '1:a', '-c:a', 'copy'])
-        + ([] if not need_padding else ['-vf', f'pad=ceil(iw/2)*2:ceil(ih/2)*2'])
+        + ([] if not out_filter_chain else ['-vf', ','.join(out_filter_chain)])
+        + codec_args + ['-pix_fmt', args.pix_fmt]
         + [
-            '-c:v', args.vcodec, '-crf', args.vcrf, '-preset', args.vpreset, '-pix_fmt', args.vpix_fmt,
             '-y', args.output
         ],
         stdin = subprocess.PIPE,
         stdout = subprocess.DEVNULL,
         stderr = subprocess.DEVNULL,
         encoding = None,
-        bufsize = 2 * out_frame_byte_size
+        bufsize = 2 * net_frame_byte_size
     )
 
     print(f'Streamers started, input pid: {input_proc.pid}, output pid: {output_proc.pid}')
@@ -177,7 +206,7 @@ def main():
     perf_read_start = time.time()
 
     while buf := input_proc.stdout.read(frame_byte_size):
-        raw_frame = np.resize(
+        raw_frame = np.reshape(
             np.frombuffer(buf, dtype=np.uint8),
             (height, width, n_channels)
         )
@@ -194,7 +223,7 @@ def main():
                         has_aligned=False, only_center_face=False, paste_back=True
                     )
                 else:
-                    output, _ = upsampler.enhance(raw_frame, outscale=args.outscale)
+                    output, _ = upsampler.enhance(raw_frame, outscale=None)
         except Exception as error:
             print('Error', error)
             print('If you encounter CUDA out of memory, try to set --tile with a smaller number.')
