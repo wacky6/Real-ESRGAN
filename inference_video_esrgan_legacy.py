@@ -47,6 +47,9 @@ def main():
     device = torch.device("cuda")
     model.load_state_dict(torch.load(args.model_path), strict=True)
     model.eval()
+    if torch.__version__[0] == '2':
+        model = torch.compile(model)
+        model = model.to(memory_format=torch.channels_last)
     model.to(device)
 
     # Probe video stream.
