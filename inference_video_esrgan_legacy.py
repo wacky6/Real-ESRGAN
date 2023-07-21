@@ -48,9 +48,21 @@ def main():
     device = torch.device("cuda")
     model.load_state_dict(torch.load(args.model_path), strict=True)
     model.eval()
+    if args.amp:
+        model.half()
     if torch.__version__[0] == '2':
-        model = torch.compile(model)
         model = model.to(memory_format=torch.channels_last)
+        # DANGER: DO NOT ENABLE backend="inductor".
+        #
+        # It does weird stuff with multiprocessing and eventually deadlocks
+        # right before exiting. Don't bother fixing, torch is completely spoiled
+        # anyway. :)
+        #
+        # Note, `torch.set_num_threads` is useless in this case.
+        #
+        # Rewriting ESRGAN in JAX/TF then load the weights would make more
+        # sense, give much better performance, and KEEP SANITY in check.
+        model = torch.compile(model, backend="inductor", disable=True)
     model.to(device)
 
     # Probe video stream.
@@ -185,11 +197,11 @@ def main():
 
         # Upscale.
         try:
-            raw_frame = raw_frame.to(device, dtype=torch.float16)
+            raw_frame = raw_frame.to(device, dtype=torch.float16 if args.amp else torch.float32)
             raw_frame /= 255.0
             raw_frame = torch.permute(raw_frame, (2,0,1))
 
-            with autocast, torch.no_grad():
+            with torch.no_grad():
                 out_frame = model(raw_frame.unsqueeze(0)).squeeze()
                 out_frame = torch.clamp(out_frame * 255.0, 0.0, 255.0)
                 out_frame = torch.permute(out_frame, (1,2,0))
@@ -226,23 +238,10 @@ def main():
     output_proc.stdin.close()
 
     # Wait for streamers to exit.
-    #
-    # This is a massive hack.
-    #
-    # If we try to subprocess.Popen.wait() or threading.Thread.join() on main thread,
-    # main thread deadlocks with some multiprocessing stuff.
-    #
-    # Unclear what "started" multiprocessing (most likely torch). Don't bother
-    # investigating, torch is spoiled anyway. :)
-    #
-    # Leave the thread hanging on the contrary get the exit behavior we want.
-    def wait_then_exit():
-        input_proc.wait()
-        output_proc.wait()
-        pbar.close()
-        print(f'Streamers completed, input exit code: {input_proc.returncode}, output exit code: {output_proc.returncode}')
-        sys.exit(0)
-    threading.Thread(target=wait_then_exit, args=()).start()
+    input_proc.wait()
+    output_proc.wait()
+    pbar.close()
+    print(f'Streamers completed, input exit code: {input_proc.returncode}, output exit code: {output_proc.returncode}')
 
 if __name__ == '__main__':
     main()
