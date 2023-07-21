@@ -22,6 +22,7 @@ def main():
         default='experiments/pretrained_models/RealESRGAN_x4plus.pth',
         help='Path to the pre-trained model')
     parser.add_argument('--output', type=str, default='output.mp4', help='Output video file')
+    parser.add_argument('--netscale', type=int, default=4, help='Network scale, used for loading custom model')
     parser.add_argument('--outscale', type=float, help='The final upsampling scale of the image')
     parser.add_argument('--tile', type=int, default=0, help='Tile size, 0 for no tile during testing')
     parser.add_argument('--tile_pad', type=int, default=10, help='Tile padding')
@@ -55,8 +56,8 @@ def main():
         netscale = 4
         model = SRVGGNetCompact(num_in_ch=3, num_out_ch=3, num_feat=64, num_conv=32, upscale=4, act_type='prelu')
     else:
-        print(f"Unknown model: {args.model_path}")
-        sys.exit(2)
+        netscale = args.netscale
+        model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32, scale=netscale)
 
     if args.amp:
         autocast = torch.cuda.amp.autocast()
