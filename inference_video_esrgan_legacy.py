@@ -9,6 +9,7 @@ import time
 import torch
 import contextlib
 import traceback
+import threading
 
 from rrdbnet_legacy import RRDBNetLegacy
 
@@ -225,10 +226,23 @@ def main():
     output_proc.stdin.close()
 
     # Wait for streamers to exit.
-    input_proc.wait()
-    output_proc.wait()
-    pbar.close()
-    print(f'Streamers completed, input exit code: {input_proc.returncode}, output exit code: {output_proc.returncode}')
+    #
+    # This is a massive hack.
+    #
+    # If we try to subprocess.Popen.wait() or threading.Thread.join() on main thread,
+    # main thread deadlocks with some multiprocessing stuff.
+    #
+    # Unclear what "started" multiprocessing (most likely torch). Don't bother
+    # investigating, torch is spoiled anyway. :)
+    #
+    # Leave the thread hanging on the contrary get the exit behavior we want.
+    def wait_then_exit():
+        input_proc.wait()
+        output_proc.wait()
+        pbar.close()
+        print(f'Streamers completed, input exit code: {input_proc.returncode}, output exit code: {output_proc.returncode}')
+        sys.exit(0)
+    threading.Thread(target=wait_then_exit, args=()).start()
 
 if __name__ == '__main__':
     main()
