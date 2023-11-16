@@ -3,6 +3,7 @@ import os
 import sys
 import torch
 import contextlib
+import onnx
 
 from basicsr.archs.rrdbnet_arch import RRDBNet
 from realesrgan.archs.srvgg_arch import SRVGGNetCompact
@@ -84,6 +85,7 @@ def main():
             dummy_input,
             args.output,
             verbose=True,
+            opset_version=10,
             input_names=input_names,
             output_names=output_names,
         )
@@ -92,6 +94,12 @@ def main():
         onnx_program.save(args.output)
     else:
         assert false, "not reached"
+
+    # Check converted model is okay.
+    onnx_model = onnx.load(args.output)
+    onnx.checker.check_model(onnx_model)   # Throws on failure
+
+    print("*** Conversion OK")
 
 if __name__ == '__main__':
     main()
