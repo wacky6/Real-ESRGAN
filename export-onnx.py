@@ -64,16 +64,20 @@ def main():
         tile=0,
         pre_pad=0,
         half=args.amp,
-        device='cpu',
+        device='cuda',
     )
 
     dtype = torch.float16 if args.amp else torch.float32
-    dummy_input = torch.randn(1, 3, args.tile, args.tile, dtype=dtype)
+    dummy_input = torch.randn(1, 3, args.tile, args.tile, dtype=dtype).to(device='cuda')
     model = upsampler.model
 
     fp_spec = 16 if args.amp else 32
     input_names = [f'in_image_float{fp_spec}_rgb01']
     output_names = [f'out_image_float{fp_spec}_rbg01']
+
+    if args.amp:
+        model = model.half()
+        dummy_input = dummy_input.to(dtype=torch.float16)
 
     if args.output == '/auto/':
         basename, _ = os.path.splitext(os.path.basename(args.model_path))
@@ -85,7 +89,6 @@ def main():
             dummy_input,
             args.output,
             verbose=True,
-            opset_version=10,
             input_names=input_names,
             output_names=output_names,
         )
