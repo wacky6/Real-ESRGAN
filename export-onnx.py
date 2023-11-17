@@ -77,26 +77,28 @@ def main():
 
     if args.amp:
         model = model.half()
+        model = model.eval()
         dummy_input = dummy_input.to(dtype=torch.float16)
 
     if args.output == '/auto/':
         basename, _ = os.path.splitext(os.path.basename(args.model_path))
         args.output = f'{basename}_fp{fp_spec}_t{args.tile}_{args.exporter}.onnx'
 
-    if args.exporter == 'torchscript':
-        torch.onnx.export(
-            model,
-            dummy_input,
-            args.output,
-            verbose=True,
-            input_names=input_names,
-            output_names=output_names,
-        )
-    elif args.exporter == 'dynamo':
-        onnx_program = torch.onnx.dynamo_export(model, dummy_input)
-        onnx_program.save(args.output)
-    else:
-        assert false, "not reached"
+    with torch.no_grad(), autocast:
+        if args.exporter == 'torchscript':
+            torch.onnx.export(
+                model,
+                dummy_input,
+                args.output,
+                verbose=True,
+                input_names=input_names,
+                output_names=output_names,
+            )
+        elif args.exporter == 'dynamo':
+            onnx_program = torch.onnx.dynamo_export(model, dummy_input)
+            onnx_program.save(args.output)
+        else:
+            assert false, "not reached"
 
     # Check converted model is okay.
     onnx_model = onnx.load(args.output)
